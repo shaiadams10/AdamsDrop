@@ -1,0 +1,11 @@
+{
+  "relay_url": "http://YOUR_SERVER_LAN_IP:8765",
+  "api_key": "REPLACE_WITH_THE_SAME_RELAY_SECRET",
+  "ntfy_sse_url": "http://YOUR_NTFY_SERVER:2586/clip-to-windows/sse",
+  "direct_to_ipad": true,
+  "direct_device": "YOUR_PAIRED_IPAD_UDID",
+  "direct_from_ipad": false,
+  "auto_send": true,
+  "notify_ipad_on_direct": true,
+  "notify_on_receive": true
+}

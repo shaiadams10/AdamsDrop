@@ -1,0 +1,4 @@
+pymobiledevice3==11.9.2
+Pillow>=11,<13
+pywin32>=310
+requests>=2.32,<3

@@ -1,0 +1,23 @@
+# Local credentials, captured content, generated runtimes
+.env
+.env.*
+!.env.example
+config.json
+**/config.json
+*.log
+cache/
+**/cache/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.pem
+*.key
+*.p12
+*.pfx
+*.plist
+*.mobileprovision
+.state/
+.local/

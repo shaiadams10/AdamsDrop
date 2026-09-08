@@ -1,0 +1,31 @@
+name: Tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: relay/requirements.txt
+      - run: python -m pip install -r relay/requirements.txt
+      - run: python relay/test_relay.py relay/server.py
+        env:
+          API_KEY: synthetic-ci-only-not-a-deployment-key
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: windows-client/requirements.txt
+      - run: python -m pip install -r windows-client/requirements.txt
+      - run: python relay/test_windows_sender.py
+      - run: python relay/test_direct_limits.py
+      - run: python relay/test_clipboard_backlog.py
