@@ -18,7 +18,7 @@ A Windows tray companion and small self-hosted relay for text and full-quality i
 | Large Windows image → iPad | Lossless optimization first; if still over the direct cap, tap the ntfy notification to run SetClipboard |
 | iPad → Windows | Run SendToWindows; Windows receives without sending it back |
 
-- Runs as **AdamsDrop.exe** with an **Adams’Drop** tray menu and login task.
+- Runs as **AdamsDrop.exe** with an **Adams’Drop** tray menu and optional login-only task.
 - Uses same-network Wi-Fi discovery, with USB preferred when attached.
 - Checks exact clipboard read-back before confirming delivery.
 - Restores developer support after iPad reboot when available through the paired tunnel.
@@ -46,7 +46,8 @@ Copy the example configuration files locally and replace placeholders. Real conf
 - Relay cap: **25 MiB** per item, ten-minute single-use fetch links. Existing ntfy/APNs queues can still deliver delayed notifications; this is not a hard real-time delivery system.
 - Automatic Windows copies made while unavailable are discarded. Copy again when connected. Manual sends and large-image fallback are transient delivery requests, not clipboard history synchronization.
 - iPad-to-Windows uses live SSE with old events rejected; it is not automatic native-copy monitoring.
-- After restart, log into Windows and unlock the iPad once. First-copy recovery can be slower; OS updates may require repairing trust or developer support.
+- After restart, launch AdamsDrop and unlock the iPad once. First-copy recovery can be slower; OS updates may require repairing trust or developer support.
+- Full-screen protection skips new clipboard transfers during detected full-screen activity; copy again afterwards. Windowed games may not be detected.
 - One paired iPad is selected. Multi-device routing is not implemented.
 
 ## Architecture
@@ -69,6 +70,7 @@ Use Windows with the client requirements installed:
 python relay/test_windows_sender.py
 python relay/test_direct_limits.py
 python relay/test_clipboard_backlog.py
+python relay/test_foreground_guard.py
 ```
 
 Relay tests: install relay requirements, set a temporary API_KEY, then run `python relay/test_relay.py relay/server.py`. They mock ntfy and do not publish messages. `windows-client/test_direct_pipeline.py` and `windows-client/test_incoming_pipeline.py` are live synthetic tests: it overwrites both clipboards and may produce notifications.

@@ -4,6 +4,7 @@ import ctypes
 import io
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sys
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 import requests
 import win32clipboard
 import clipboard_origin
+import foreground_guard
 from PIL import Image
 
 try:
@@ -25,7 +27,7 @@ LOG_FILE = SCRIPT_DIR / "listener.log"
 CACHE_DIR = SCRIPT_DIR / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
-handlers = [logging.FileHandler(LOG_FILE, encoding="utf-8")]
+handlers = [RotatingFileHandler(LOG_FILE, maxBytes=2_000_000, backupCount=2, encoding="utf-8")]
 if sys.stdout is not None:
     handlers.append(logging.StreamHandler(sys.stdout))
 
@@ -54,6 +56,8 @@ def write_text_to_clipboard(text: str):
 def _write_text_to_clipboard(text: str):
     """Write Unicode text to Windows clipboard with retry logic."""
     for _ in range(5):
+        if foreground_guard.should_pause():
+            return False
         try:
             win32clipboard.OpenClipboard()
             try:
@@ -76,20 +80,26 @@ def write_image_to_clipboard(image_bytes: bytes):
 def _write_image_to_clipboard(image_bytes: bytes):
     """Convert PNG/JPEG bytes to DIB and write to Windows clipboard."""
     for _ in range(5):
+        if foreground_guard.should_pause():
+            return False, (0, 0)
         try:
             image = Image.open(io.BytesIO(image_bytes))
             output = io.BytesIO()
             # Convert to RGB (DIB requires BMP structure)
             image.convert("RGB").save(output, "BMP")
             dib_data = output.getvalue()[14:]
+            png = io.BytesIO()
+            image.save(png, 'PNG')
+            png_data = png.getvalue()
+
+            if foreground_guard.should_pause():
+                return False, (0, 0)
 
             win32clipboard.OpenClipboard()
             try:
                 win32clipboard.EmptyClipboard()
                 win32clipboard.SetClipboardData(win32clipboard.CF_DIB, dib_data)
-                png = io.BytesIO()
-                image.save(png, 'PNG')
-                win32clipboard.SetClipboardData(win32clipboard.RegisterClipboardFormat('PNG'), png.getvalue())
+                win32clipboard.SetClipboardData(win32clipboard.RegisterClipboardFormat('PNG'), png_data)
                 clipboard_origin.mark_received()
                 sync_state.last_received_sequence = ctypes.windll.user32.GetClipboardSequenceNumber()
                 return True, image.size
@@ -102,6 +112,8 @@ def _write_image_to_clipboard(image_bytes: bytes):
 def process_token(token: str, relay_url: str, api_key: str, config: dict = None):
     """Fetch item from relay using token and write to Windows clipboard."""
     global tray_instance
+    if foreground_guard.should_pause():
+        return
     fetch_url = f"{relay_url}/fetch/{token}"
     try:
         resp = requests.get(fetch_url, headers={"X-Api-Key": api_key}, timeout=10)
@@ -112,7 +124,7 @@ def process_token(token: str, relay_url: str, api_key: str, config: dict = None)
             sync_state.last_received_time = time.time()
             sync_state.last_sent_hash = sync_state.last_received_hash
 
-            notify_enabled = config.get("notify_on_receive", True) if config else True
+            notify_enabled = config.get("notify_on_receive", False) if config else False
 
             if content_type.startswith("image/"):
                 success, size = write_image_to_clipboard(resp.content)
@@ -211,6 +223,10 @@ if __name__ == "__main__":
     if win32api.GetLastError() == 183:
         sys.exit(0)
 
+    # Give games and foreground work scheduling preference, including manual launches.
+    import win32process
+    win32process.SetPriorityClass(win32api.GetCurrentProcess(), win32process.BELOW_NORMAL_PRIORITY_CLASS)
+
     def trigger_send():
         try:
             import send_to_ipad
@@ -219,6 +235,8 @@ if __name__ == "__main__":
             logger.error("Manual send failed (%s)", type(err).__name__)
 
     def prepare_direct():
+        if foreground_guard.should_pause():
+            return
         cfg = load_config()
         if cfg.get("direct_to_ipad") and cfg.get("direct_device"):
             try:
@@ -243,5 +261,5 @@ if __name__ == "__main__":
         tray_instance = TrayIcon(on_send_to_ipad=trigger_send)
         tray_instance.run()
     except Exception as exc:
-        logger.warning(f"System tray icon could not be created: {exc}. Continuing headless listener...")
-        listener_thread.join()
+        logger.error("System tray failed (%s); exiting", type(exc).__name__)
+        sys.exit(1)

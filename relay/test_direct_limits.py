@@ -12,6 +12,10 @@ import send_to_ipad as sender
 import clipboard_receipt
 
 class Limits(unittest.TestCase):
+    def setUp(self):
+        guard = patch.object(sender.foreground_guard, 'should_pause', return_value=False)
+        guard.start(); self.addCleanup(guard.stop)
+
     def test_large_rgb_stays_lossless_and_uses_fallback(self):
         image = Image.frombytes('RGB', (900, 900), random.Random(42).randbytes(900*900*3))
         stream = io.BytesIO(); image.save(stream, format='PNG')

@@ -4,6 +4,7 @@ import threading
 import logging
 import requests
 import time
+import foreground_guard
 
 _pending = queue.Queue(maxsize=1)
 _lock = threading.Lock()
@@ -15,7 +16,7 @@ def _run():
         while True:
             url, key, kind, created = _pending.get()
             try:
-                if time.monotonic() - created > 5:
+                if time.monotonic() - created > 5 or foreground_guard.should_pause():
                     continue
                 session.post(url + '/copied', params={'kind': kind},
                              headers={'X-Api-Key': key}, timeout=5).raise_for_status()

@@ -8,6 +8,23 @@ import direct_to_ipad as direct
 import sync_state
 
 class BacklogTests(unittest.TestCase):
+ def setUp(self):
+  guard=patch.object(sender.foreground_guard,'should_pause',return_value=False)
+  guard.start();self.addCleanup(guard.stop)
+
+ def test_busy_send_returns_without_capturing_or_queuing(self):
+  with sync_state.send_lock, patch.object(sender, '_send_clipboard') as send:
+   for silent in (True, False):
+    self.assertEqual(sender.send_clipboard(silent), (False, 'Transfer busy; copy again when ready'))
+   send.assert_not_called()
+
+ def test_send_exception_releases_lock(self):
+  with patch.object(sender, '_send_clipboard', side_effect=RuntimeError('synthetic')):
+   with self.assertRaises(RuntimeError):
+    sender.send_clipboard(True)
+  self.assertTrue(sync_state.send_lock.acquire(blocking=False))
+  sync_state.send_lock.release()
+
  def test_direct_setup_exception_does_not_publish_automatic_fallback(self):
   config={'api_key':'synthetic','relay_url':'http://test','direct_to_ipad':True}
   with patch.object(sender,'load_config',return_value=config), \

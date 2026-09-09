@@ -2,6 +2,7 @@
 import io
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sys
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 import requests
 import win32clipboard
 import clipboard_origin
+import foreground_guard
 from PIL import Image, ImageGrab
 
 SCRIPT_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -23,7 +25,7 @@ logger = logging.getLogger("ClipboardSender")
 logger.propagate = False
 if not logger.handlers:
     logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    fh = RotatingFileHandler(SCRIPT_DIR / 'sender.log', maxBytes=2_000_000, backupCount=2, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(fh)
 
@@ -43,6 +45,8 @@ def load_config():
 
 def show_toast(title: str, message: str):
     """Display a native Windows notification toast via PowerShell."""
+    if foreground_guard.should_pause() or not load_config().get('notify_on_send', False):
+        return
     ps_cmd = (
         "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
         "$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
@@ -100,8 +104,14 @@ def get_clipboard_content():
 
 def send_clipboard(silent: bool = False):
     # Timer callbacks and manual sends share one session and cannot race.
-    with sync_state.send_lock:
+    if foreground_guard.should_pause():
+        return False, "Paused for full-screen activity; copy again afterwards"
+    if not sync_state.send_lock.acquire(blocking=False):
+        return False, "Transfer busy; copy again when ready"
+    try:
         return _send_clipboard(silent)
+    finally:
+        sync_state.send_lock.release()
 
 
 def _send_clipboard(silent: bool = False):
@@ -135,6 +145,8 @@ def _send_clipboard(silent: bool = False):
             return False, "Clipboard changed during capture; next event will send latest"
     if not payload:
         return False, f"Nothing sent: {desc}"
+    if foreground_guard.should_pause():
+        return False, "Paused for full-screen activity; copy again afterwards"
     captured = time.perf_counter()
     payload_hash = hashlib.sha256(payload).hexdigest()
 
@@ -142,7 +154,7 @@ def _send_clipboard(silent: bool = False):
         try:
             import direct_to_ipad
             if direct_to_ipad.send(payload, content_type, config.get("direct_device"),
-                                  is_current=lambda: ctypes.windll.user32.GetClipboardSequenceNumber() == sequence):
+                                  is_current=lambda: not foreground_guard.should_pause() and ctypes.windll.user32.GetClipboardSequenceNumber() == sequence):
                 sync_state.last_sent_hash = payload_hash
                 sync_state.last_sent_sequence = sequence
                 if config.get('notify_ipad_on_direct', True):
@@ -160,6 +172,8 @@ def _send_clipboard(silent: bool = False):
                 return False, "Direct clipboard unavailable; copy again when connected"
 
     try:
+        if foreground_guard.should_pause():
+            return False, "Paused for full-screen activity; copy again afterwards"
         url = f"{relay_url}/send?source=windows"
         headers = {
             "X-Api-Key": api_key,

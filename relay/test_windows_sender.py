@@ -8,6 +8,8 @@ import sync_state as state
 
 class SenderTests(unittest.TestCase):
  def setUp(self):
+  guard=patch.object(s.foreground_guard,'should_pause',return_value=False)
+  guard.start();self.addCleanup(guard.stop)
   self.origin_patch=patch.object(s.clipboard_origin,'is_received',return_value=False)
   self.origin_patch.start();self.addCleanup(self.origin_patch.stop)
   state.last_received_sequence=None; state.last_sent_sequence=None

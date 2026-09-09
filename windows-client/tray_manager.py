@@ -11,6 +11,7 @@ from pathlib import Path
 import win32api
 import win32con
 import win32gui
+import foreground_guard
 
 try:
     import sync_state
@@ -40,6 +41,7 @@ class TrayIcon:
         self.hicon = None
         self.last_received_image = None
         self._debounce_timer = None
+        self._closing = False
         self._load_config()
         self._create_window()
         self._create_icon()
@@ -114,6 +116,8 @@ class TrayIcon:
 
     def show_balloon(self, title: str, message: str, image_path: str = None):
         """Display native Windows toast notification without external processes."""
+        if foreground_guard.should_pause():
+            return
         self.last_received_image = image_path
         flags = win32gui.NIF_INFO | win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
         nid = (
@@ -126,7 +130,7 @@ class TrayIcon:
             message,
             6000,
             title,
-            win32gui.NIIF_INFO
+            win32gui.NIIF_INFO | 0x10 | 0x80  # No sound; respect Windows quiet time.
         )
         try:
             win32gui.Shell_NotifyIcon(win32gui.NIM_MODIFY, nid)
@@ -155,20 +159,22 @@ class TrayIcon:
             None
         )
         win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
+        win32gui.DestroyMenu(menu)
 
     def _on_clipboard_change(self):
+        if self._closing:
+            return
         try:
             import send_to_ipad
             success, desc = send_to_ipad.send_clipboard(silent=True)
             if success:
                 self.update_tooltip(f"Adams’Drop (Sent: {desc})")
-                threading.Timer(3.0, lambda: self.update_tooltip("Adams’Drop (Active)")).start()
         except Exception:
             pass
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_CLIPBOARDUPDATE:
-            if self.auto_send and sync_state.auto_send_enabled:
+            if self.auto_send and sync_state.auto_send_enabled and not foreground_guard.should_pause():
                 if self._debounce_timer:
                     self._debounce_timer.cancel()
                 # Coalesce multi-format clipboard events; capture retries handle temporary locks.
@@ -218,6 +224,12 @@ class TrayIcon:
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
     def destroy(self):
+        if self._closing:
+            return
+        self._closing = True
+        sync_state.auto_send_enabled = False
+        if self._debounce_timer:
+            self._debounce_timer.cancel()
         try:
             ctypes.windll.user32.RemoveClipboardFormatListener(self.hwnd)
         except Exception:
