@@ -9,12 +9,16 @@ import os
 import sys
 import time
 import subprocess
+import uuid
 from pathlib import Path
 
 import requests
 import win32clipboard
 import clipboard_origin
 import foreground_guard
+import video_transfer
+import file_transfer
+from tray_manager import reveal_file_in_explorer
 from PIL import Image
 
 try:
@@ -24,8 +28,6 @@ except ImportError:
 
 SCRIPT_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 LOG_FILE = SCRIPT_DIR / "listener.log"
-CACHE_DIR = SCRIPT_DIR / "cache"
-CACHE_DIR.mkdir(exist_ok=True)
 
 handlers = [RotatingFileHandler(LOG_FILE, maxBytes=2_000_000, backupCount=2, encoding="utf-8")]
 if sys.stdout is not None:
@@ -109,6 +111,26 @@ def _write_image_to_clipboard(image_bytes: bytes):
             time.sleep(0.1)
     return False, (0, 0)
 
+def save_received_image(image_bytes, content_type, config):
+    """Keep each original image as a separate file for notification selection."""
+    suffixes = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
+                "image/bmp": ".bmp", "image/webp": ".webp", "image/tiff": ".tif"}
+    suffix = suffixes.get(content_type.split(";", 1)[0], ".png")
+    destination = Path(config.get("receive_image_dir") or config.get("receive_video_dir") or
+                       Path.home() / "Downloads" / "AdamsDrop").expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    name = "image-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:12]
+    final_path = destination / (name + suffix)
+    partial = destination / (".adamsdrop-" + name + ".part")
+    try:
+        with partial.open("xb") as file:
+            file.write(image_bytes)
+        partial.rename(final_path)
+        return final_path
+    finally:
+        partial.unlink(missing_ok=True)
+
+
 def process_token(token: str, relay_url: str, api_key: str, config: dict = None):
     """Fetch item from relay using token and write to Windows clipboard."""
     global tray_instance
@@ -116,9 +138,30 @@ def process_token(token: str, relay_url: str, api_key: str, config: dict = None)
         return
     fetch_url = f"{relay_url}/fetch/{token}"
     try:
-        resp = requests.get(fetch_url, headers={"X-Api-Key": api_key}, timeout=10)
+        resp = requests.get(fetch_url, headers={"X-Api-Key": api_key}, timeout=(10, 60), stream=True)
         if resp.status_code == 200:
             content_type = resp.headers.get("content-type", "").lower()
+            if resp.headers.get("x-adamsdrop-kind") == "file":
+                file_path = file_transfer.save_file(resp, config or {}, foreground_guard.should_pause)
+                logger.info("Saved original file from iPad (%s bytes; SHA-256 verified)", file_path.stat().st_size)
+                if config and config.get("notify_on_receive", False) and tray_instance:
+                    tray_instance.show_balloon(
+                        "iPad Adams’Drop", "File saved — Click to show in folder",
+                        reveal_path=str(file_path))
+                return
+            if content_type.startswith("video/"):
+                video_path = video_transfer.save_video(resp, config or {}, foreground_guard.should_pause)
+                logger.info("Saved original video from iPad (%s bytes; SHA-256 verified)", video_path.stat().st_size)
+                if config and config.get("notify_on_receive", False) and tray_instance:
+                    tray_instance.show_balloon(
+                        "iPad Adams’Drop", "Original video saved — Click to show in folder",
+                        reveal_path=str(video_path))
+                if not foreground_guard.should_pause():
+                    try:
+                        reveal_file_in_explorer(str(video_path), automatic=True)
+                    except Exception as exc:
+                        logger.warning("Video folder reveal failed (%s)", type(exc).__name__)
+                return
             # Set sync_state before writing to clipboard to prevent echo feedback
             sync_state.last_received_hash = hashlib.sha256(resp.content).hexdigest()
             sync_state.last_received_time = time.time()
@@ -129,13 +172,11 @@ def process_token(token: str, relay_url: str, api_key: str, config: dict = None)
             if content_type.startswith("image/"):
                 success, size = write_image_to_clipboard(resp.content)
                 if success:
-                    # Save image to cache for click-to-open
-                    img_file = CACHE_DIR / "last_clip.png"
+                    img_file = None
                     try:
-                        with open(img_file, "wb") as f:
-                            f.write(resp.content)
-                    except Exception:
-                        pass
+                        img_file = save_received_image(resp.content, content_type, config or {})
+                    except Exception as exc:
+                        logger.warning("Image file save failed (%s); clipboard copy succeeded", type(exc).__name__)
 
                     msg = f"Copied image from iPad ({size[0]}x{size[1]})"
                     logger.info(msg)
@@ -143,8 +184,9 @@ def process_token(token: str, relay_url: str, api_key: str, config: dict = None)
                     if notify_enabled and tray_instance:
                         tray_instance.show_balloon(
                             "iPad Adams’Drop",
-                            f"📷 Image copied ({size[0]}x{size[1]}) — Click to view",
-                            image_path=str(img_file)
+                            f"📷 Image copied ({size[0]}x{size[1]})" +
+                            (" — Click to show in folder" if img_file else " — File save unavailable"),
+                            reveal_path=str(img_file) if img_file else None
                         )
                 else:
                     logger.error("Failed to write image to clipboard")
@@ -167,6 +209,9 @@ def process_token(token: str, relay_url: str, api_key: str, config: dict = None)
             logger.warning(f"Fetch failed with status {resp.status_code}")
     except Exception as exc:
         logger.error(f"Clipboard fetch failed ({type(exc).__name__})")
+    finally:
+        if 'resp' in locals():
+            resp.close()
 
 def listen_loop():
     config = load_config()
@@ -215,6 +260,12 @@ def listen_loop():
             backoff = min(backoff * 2, 30)
 
 if __name__ == "__main__":
+    if (len(sys.argv) > 1 and sys.argv[1] in ("--send-files", "--send-selected")) or (
+            getattr(sys, 'frozen', False) and Path(sys.executable).stem == "AdamsDropSend"):
+        import send_files_to_ipad
+        selected = Path(sys.executable).stem == "AdamsDropSend" or sys.argv[1] == "--send-selected"
+        paths = sys.argv[2:] if len(sys.argv) > 1 and sys.argv[1].startswith("--send-") else sys.argv[1:]
+        sys.exit(send_files_to_ipad.run(paths, selected=selected))
     import win32event
     import win32api
     import threading

@@ -6,7 +6,7 @@
 
 **Copy on Windows. Paste on iPad.**
 
-A Windows tray companion and small self-hosted relay for text and full-quality images. Direct transfers use a trusted Apple developer connection over Wi-Fi or USB; ntfy provides receipt notifications and a Shortcut fallback for large images.
+A Windows tray companion and small self-hosted relay for text, full-quality images and original iPad files, including videos, PDFs, CSVs and JSON. Direct transfers use a trusted Apple developer connection over Wi-Fi or USB; ntfy provides receipt notifications and a Shortcut fallback for large images and iPad files.
 
 > Experimental integration with reverse-engineered Apple developer services. Automatic iPad-to-Windows capture is **not supported**. The iPad-to-Windows Shortcut is supported. This is not AirDrop or an Apple product.
 
@@ -15,10 +15,14 @@ A Windows tray companion and small self-hosted relay for text and full-quality i
 | Direction | Workflow |
 | --- | --- |
 | Windows → iPad | Copy normally, then paste on iPad; no app switch for verified direct transfers |
+| Windows file → iPad (PDF, images, videos, JSON/TXT/CSV, archives, any extension) | Stream Deck button with files selected in the active Explorer tab, or right-click → Send to → AdamsDrop - iPad; tap the ntfy notification to save the original file and preview supported formats |
 | Large Windows image → iPad | Lossless optimization first; if still over the direct cap, tap the ntfy notification to run SetClipboard |
-| iPad → Windows | Run SendToWindows; Windows receives without sending it back |
+| iPad → Windows | Run SendToWindows; text/images copy to the clipboard, and image notifications reveal the saved image in its folder |
+| iPad video → Windows | Share with SendToWindows; the original file saves in Downloads/AdamsDrop and automatically reveals its folder when full-screen protection is off |
+| iPad PDF/CSV/JSON/other file → Windows | Share with SendToWindows; the original file saves in Downloads/AdamsDrop, and its notification reveals its folder when clicked |
 
 - Runs as **AdamsDrop.exe** with an **Adams’Drop** tray menu and optional login-only task.
+- A **Stream Deck System → Open** action can launch **AdamsDropSend.exe** to send selected Explorer files or choose files. Explicit file sends show a small progress panel.
 - Uses same-network Wi-Fi discovery, with USB preferred when attached.
 - Checks exact clipboard read-back before confirming delivery.
 - Restores developer support after iPad reboot when available through the paired tunnel.
@@ -43,7 +47,7 @@ Copy the example configuration files locally and replace placeholders. Real conf
 ## Limits and behavior
 
 - Direct cap: **1,000,000 encoded bytes** after lossless PNG optimization. No downscaling or JPEG conversion.
-- Relay cap: **25 MiB** per item, ten-minute single-use fetch links. Existing ntfy/APNs queues can still deliver delayed notifications; this is not a hard real-time delivery system.
+- Relay cap: **25 MiB** for text/images, **2 GiB** for raw iPad video/file uploads, ten-minute single-use fetch links. Files stream through temporary disk storage and save on Windows after a SHA-256 check, leaving the clipboard unchanged. See [shortcut upgrade](docs/IPAD.md#add-original-video-sharing-to-sendtowindows) and [file sharing](docs/IPAD.md#send-pdfs-csvs-json-and-other-files). Existing ntfy/APNs queues can still deliver delayed notifications; this is not a hard real-time delivery system.
 - Automatic Windows copies made while unavailable are discarded. Copy again when connected. Manual sends and large-image fallback are transient delivery requests, not clipboard history synchronization.
 - iPad-to-Windows uses live SSE with old events rejected; it is not automatic native-copy monitoring.
 - After restart, launch AdamsDrop and unlock the iPad once. First-copy recovery can be slower; OS updates may require repairing trust or developer support.
@@ -71,8 +75,11 @@ python relay/test_windows_sender.py
 python relay/test_direct_limits.py
 python relay/test_clipboard_backlog.py
 python relay/test_foreground_guard.py
+python relay/test_video_receiver.py
+python relay/test_file_receiver.py
+python relay/test_outbound_files.py
 ```
 
-Relay tests: install relay requirements, set a temporary API_KEY, then run `python relay/test_relay.py relay/server.py`. They mock ntfy and do not publish messages. `windows-client/test_direct_pipeline.py` and `windows-client/test_incoming_pipeline.py` are live synthetic tests: it overwrites both clipboards and may produce notifications.
+Relay tests: install relay requirements, set a temporary API_KEY, then run `python relay/test_relay.py relay/server.py`, `python relay/test_video_transfer.py` and `python relay/test_file_transfer.py`. They mock ntfy and do not publish messages. `windows-client/test_direct_pipeline.py` and `windows-client/test_incoming_pipeline.py` are live synthetic tests: it overwrites both clipboards and may produce notifications.
 
 See [operations](docs/OPERATIONS.md), [security](SECURITY.md), and [release checklist](docs/RELEASING.md). Licensed under [MIT](LICENSE). Dependencies retain their own licenses.

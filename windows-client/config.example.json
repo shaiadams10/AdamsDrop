@@ -7,5 +7,8 @@
   "direct_from_ipad": false,
   "auto_send": true,
   "notify_ipad_on_direct": true,
-  "notify_on_receive": false
+  "notify_on_receive": false,
+  "receive_video_dir": "",
+  "receive_image_dir": "",
+  "receive_file_dir": ""
 }

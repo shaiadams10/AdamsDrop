@@ -16,6 +16,8 @@ jobs:
       - run: python relay/test_relay.py relay/server.py
         env:
           API_KEY: synthetic-ci-only-not-a-deployment-key
+      - run: python relay/test_video_transfer.py
+      - run: python relay/test_file_transfer.py
   windows:
     runs-on: windows-latest
     steps:
@@ -29,3 +31,7 @@ jobs:
       - run: python relay/test_windows_sender.py
       - run: python relay/test_direct_limits.py
       - run: python relay/test_clipboard_backlog.py
+      - run: python relay/test_foreground_guard.py
+      - run: python relay/test_video_receiver.py
+      - run: python relay/test_file_receiver.py
+      - run: python relay/test_outbound_files.py

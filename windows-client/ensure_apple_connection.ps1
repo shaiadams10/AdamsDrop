@@ -9,4 +9,11 @@ $package = Get-AppxPackage -Name AppleInc.AppleDevices | Select-Object -First 1
 if (-not $package) { exit 1 }
 $launcher = Join-Path $package.InstallLocation 'AppleMobileDeviceLauncher.exe'
 if (-not (Test-Path -LiteralPath $launcher)) { exit 1 }
-Start-Process -FilePath $launcher -WindowStyle Hidden
+try {
+    Start-Process -FilePath $launcher -WindowStyle Hidden
+} catch {
+    # Windows may require package activation instead of direct WindowsApps execution.
+    $appleAlias = Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps/AppleDevices.exe'
+    if (-not (Test-Path -LiteralPath $appleAlias)) { throw }
+    Start-Process -FilePath $appleAlias -WindowStyle Hidden
+}

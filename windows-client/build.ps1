@@ -9,5 +9,6 @@ python -m PyInstaller --noconfirm --windowed --onedir --name AdamsDrop --icon $i
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
 Copy-Item windows-client/ensure_apple_connection.ps1,windows-client/tray_icon.ico dist/AdamsDrop/
+Copy-Item -LiteralPath dist/AdamsDrop/AdamsDrop.exe -Destination dist/AdamsDrop/AdamsDropSend.exe
 
 Write-Output 'Built dist/AdamsDrop/AdamsDrop.exe. Copy config.example.json to config.json beside the executable and configure it.'

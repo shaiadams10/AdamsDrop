@@ -11,6 +11,8 @@ from pathlib import Path
 import win32api
 import win32con
 import win32gui
+import pythoncom
+from win32com.shell import shell
 import foreground_guard
 
 try:
@@ -32,6 +34,23 @@ ID_SEND_TO_IPAD = 1001
 ID_OPEN_SETUP = 1002
 ID_VIEW_LOGS = 1003
 ID_EXIT = 1004
+ID_SEND_FILES = 1005
+
+def reveal_file_in_explorer(file_path, *, automatic=False):
+    """Open the containing folder with this exact file selected, without playback."""
+    if automatic and foreground_guard.should_pause():
+        return False
+    pythoncom.CoInitialize()
+    try:
+        item, _ = shell.SHParseDisplayName(str(Path(file_path).resolve()), 0)
+        if automatic and foreground_guard.should_pause():
+            return False
+        # No child list: the absolute item identifies the file to select in its parent.
+        shell.SHOpenFolderAndSelectItems(item, (), 0)
+        return True
+    finally:
+        pythoncom.CoUninitialize()
+
 
 class TrayIcon:
     def __init__(self, on_send_to_ipad=None, tooltip="Adams’Drop (Active)"):
@@ -39,7 +58,7 @@ class TrayIcon:
         self.tooltip = tooltip
         self.hwnd = None
         self.hicon = None
-        self.last_received_image = None
+        self.last_received_file = None
         self._debounce_timer = None
         self._closing = False
         self._load_config()
@@ -114,11 +133,11 @@ class TrayIcon:
         except Exception:
             pass
 
-    def show_balloon(self, title: str, message: str, image_path: str = None):
+    def show_balloon(self, title: str, message: str, image_path: str = None, reveal_path: str = None):
         """Display native Windows toast notification without external processes."""
         if foreground_guard.should_pause():
             return
-        self.last_received_image = image_path
+        self.last_received_file = reveal_path or image_path
         flags = win32gui.NIF_INFO | win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
         nid = (
             self.hwnd,
@@ -143,6 +162,7 @@ class TrayIcon:
         win32gui.AppendMenu(menu, win32con.MF_STRING | auto_flag, ID_TOGGLE_AUTOSYNC, "Auto-Send on Copy (Win+Shift+S / Ctrl+C)")
         win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
         win32gui.AppendMenu(menu, win32con.MF_STRING, ID_SEND_TO_IPAD, "Send Clipboard to iPad Now")
+        win32gui.AppendMenu(menu, win32con.MF_STRING, ID_SEND_FILES, "Send Files to iPad...")
         win32gui.AppendMenu(menu, win32con.MF_STRING, ID_OPEN_SETUP, "Open iPad Setup Page")
         win32gui.AppendMenu(menu, win32con.MF_STRING, ID_VIEW_LOGS, "View Logs")
         win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
@@ -184,13 +204,15 @@ class TrayIcon:
             return 0
         elif msg == WM_TRAY_NOTIFY:
             if lparam == NIN_BALLOONUSERCLICK:
-                # User clicked notification -> open image if available
-                if self.last_received_image and os.path.exists(self.last_received_image):
-                    try:
-                        os.startfile(self.last_received_image)
-                    except Exception:
-                        pass
-                    self.last_received_image = None
+                if self.last_received_file:
+                    file_path = self.last_received_file
+                    self.last_received_file = None
+                    if os.path.isfile(file_path):
+                        try:
+                            reveal_file_in_explorer(file_path)
+                        except Exception:
+                            pass
+                    return 0
                 return 0
             elif lparam == win32con.WM_RBUTTONUP:
                 self._show_menu()
@@ -211,6 +233,11 @@ class TrayIcon:
                     threading.Thread(target=self.on_send_to_ipad, daemon=True).start()
             elif cmd_id == ID_OPEN_SETUP:
                 webbrowser.open(json.loads(CONFIG_PATH.read_text()).get('relay_url', 'http://127.0.0.1:8765').rstrip('/') + '/setup')
+            elif cmd_id == ID_SEND_FILES:
+                # The explicit action opens a picker in an isolated one-shot process.
+                import subprocess
+                args = [sys.executable, "--send-files"] if getattr(sys, 'frozen', False) else [sys.executable, str(SCRIPT_DIR / 'receive_from_ipad.py'), "--send-files"]
+                subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
             elif cmd_id == ID_VIEW_LOGS:
                 if LOG_FILE.exists():
                     os.startfile(str(LOG_FILE))
